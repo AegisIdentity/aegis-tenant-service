@@ -3,10 +3,15 @@ package io.aegis.tenant;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
+/**
+ * Test infrastructure: a real Postgres. The real {@code JwtDecoder} ({@code ResourceServerJwtConfig})
+ * is used as-is — it builds lazily (no network at startup) and is never invoked, since the {@code jwt()}
+ * MockMvc mutator injects a pre-authenticated token directly into the security context. (No stub
+ * decoder here — it would collide with the real bean by name.)
+ */
 @TestConfiguration(proxyBeanMethods = false)
 public class TenantTestConfig {
 
@@ -15,12 +20,5 @@ public class TenantTestConfig {
     PostgreSQLContainer<?> postgresContainer() {
         return new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))
                 .withDatabaseName("aegis_tenant");
-    }
-
-    @Bean
-    JwtDecoder jwtDecoder() {
-        return token -> {
-            throw new UnsupportedOperationException("jwt() mutator injects auth in tests");
-        };
     }
 }
