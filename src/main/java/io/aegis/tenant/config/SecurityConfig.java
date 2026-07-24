@@ -12,9 +12,12 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfigurationSource;
 
-/** Resource-server security for the tenant API: tenant reads need {@code tenant:read}, tenant writes
- * and custom-domain management need {@code tenant:admin}, and the internal Host&rarr;tenant resolve
- * endpoint needs the service scope {@code tenant:resolve}. Default-deny, shared hardening baseline. */
+/** Resource-server security for the tenant API. Tenant reads need {@code tenant:read} (ownership is
+ * enforced in the controller, H3) or the platform-operator scope for cross-tenant reads; creating a
+ * top-level tenant needs the dedicated platform-operator scope {@code tenant:platform-admin} (H4),
+ * NOT the per-tenant {@code tenant:admin} used for self-service custom-domain management; the internal
+ * Host&rarr;tenant resolve endpoint needs the service scope {@code tenant:resolve}. Default-deny,
+ * shared hardening baseline. */
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfig {
 
@@ -25,9 +28,14 @@ public class SecurityConfig {
         http
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/tenants").hasAuthority("SCOPE_tenant:admin")
+                        // H4: creating a top-level tenant is a platform-operator action, not a
+                        // per-tenant admin one.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/tenants")
+                        .hasAuthority("SCOPE_tenant:platform-admin")
+                        // Reads: per-tenant read scope (controller enforces ownership, H3) or a
+                        // platform operator (may read any tenant).
                         .requestMatchers(HttpMethod.GET, "/api/v1/tenants/**", "/api/v1/tenants:resolve")
-                        .hasAuthority("SCOPE_tenant:read")
+                        .hasAnyAuthority("SCOPE_tenant:read", "SCOPE_tenant:platform-admin")
                         // Server-to-server Host->tenant resolution for the edge/authorization-server.
                         // Only the AS's own service token carries tenant:resolve.
                         .requestMatchers("/api/v1/internal/domains/**").hasAuthority("SCOPE_tenant:resolve")

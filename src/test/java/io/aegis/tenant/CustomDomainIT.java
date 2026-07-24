@@ -27,7 +27,10 @@ import org.springframework.web.context.WebApplicationContext;
  */
 @SpringBootTest
 @Import(TenantTestConfig.class)
-@TestPropertySource(properties = "aegis.domains.auto-verify=true")
+// ddl-auto defaults to 'validate' (L-edge-2); create the schema for the empty test container here.
+@TestPropertySource(properties = {
+        "aegis.domains.auto-verify=true",
+        "spring.jpa.hibernate.ddl-auto=create-drop"})
 class CustomDomainIT {
 
     @Autowired

@@ -10,16 +10,22 @@ spring:
     password: ${POSTGRES_PASSWORD:dev-only-change-me}
   jpa:
     hibernate:
-      ddl-auto: update
+      # L-edge-2: never mutate the schema of the credential/tenant store implicitly. Ship 'validate';
+      # a migration tool (or the dev profile / test override) owns schema changes.
+      ddl-auto: ${AEGIS_JPA_DDL_AUTO:validate}
     open-in-view: false
 
 aegis:
   jwt:
     # Split-horizon (see ResourceServerJwtConfig): fetch JWKS from a reachable in-network URI and
-    # validate iss against an allowlist, so browser tokens (iss=localhost:9000) AND in-network service
-    # tokens (iss=authorization-server:9000) are both accepted. A single issuer-uri cannot satisfy both.
-    jwk-set-uri: ${AEGIS_JWKS_URI:http://localhost:9000/oauth2/jwks}
-    accepted-issuers: ${AEGIS_ACCEPTED_ISSUERS:http://localhost:9000,http://authorization-server:9000}
+    # validate iss against an allowlist. M-edge-2/L-edge-3: default to HTTPS — the in-network hop must
+    # be TLS (service-mesh mTLS in prod) so a MitM cannot substitute JWKS signing keys and forge
+    # tokens. The plaintext-HTTP split-horizon defaults for local dev live under the 'dev' profile.
+    jwk-set-uri: ${AEGIS_JWKS_URI:https://authorization-server:9000/oauth2/jwks}
+    accepted-issuers: ${AEGIS_ACCEPTED_ISSUERS:https://authorization-server:9000}
+    # M-edge-1: when set, require this value in the token 'aud' (defeats cross-service token replay).
+    # Unset = no-op (issuer + expiry still enforced). Set per-env, e.g. AEGIS_JWT_AUDIENCE=aegis-tenant-service.
+    expected-audience: ${AEGIS_JWT_AUDIENCE:}
   cors:
     allowed-origins: ${AEGIS_CORS_ORIGINS:https://app.aegis.local}
   domains:
@@ -38,3 +44,20 @@ management:
     health:
       probes:
         enabled: true
+
+---
+# Local development only (SPRING_PROFILES_ACTIVE=dev). Restores the plaintext-HTTP split-horizon JWKS
+# defaults (browser tokens iss=localhost:9000 AND in-network tokens iss=authorization-server:9000) and
+# an auto-DDL schema, so `docker compose up` works without a TLS mesh or a migration step. Never
+# activate this profile in a real environment.
+spring:
+  config:
+    activate:
+      on-profile: dev
+  jpa:
+    hibernate:
+      ddl-auto: update
+aegis:
+  jwt:
+    jwk-set-uri: ${AEGIS_JWKS_URI:http://localhost:9000/oauth2/jwks}
+    accepted-issuers: ${AEGIS_ACCEPTED_ISSUERS:http://localhost:9000,http://authorization-server:9000}
