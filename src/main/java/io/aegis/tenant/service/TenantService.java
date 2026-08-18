@@ -40,7 +40,7 @@ public class TenantService {
     }
 
     @Transactional
-    public Tenant create(String name, String slug, String primaryDomain) {
+    public Tenant create(String name, String slug, String primaryDomain, String actor) {
         if (slug == null || !SLUG.matcher(slug).matches()) {
             throw new IllegalArgumentException("slug must be a lowercase DNS-safe label");
         }
@@ -53,19 +53,18 @@ public class TenantService {
         }
         Tenant created = tenants.save(new Tenant(UUID.randomUUID(), name, slug,
                 (primaryDomain == null || primaryDomain.isBlank()) ? null : primaryDomain));
-        // A new top-level tenant is a control-plane event — stream it to the platform audit trail.
-        // The event's tenant is the NEW tenant; a follow-up can enrich the actor from the operator's
-        // token (not threaded into this service method today).
-        publish("tenant.created", slug, "tenant name=" + name);
+        // A new top-level tenant is a control-plane event — stream it to the platform audit trail,
+        // attributed to the operator who created it (from their token subject).
+        publish("tenant.created", slug, actor, "tenant name=" + name);
         return created;
     }
 
     /** Best-effort audit stream; never fails the caller's operation (audit degrades, never breaks). */
-    private void publish(String action, String tenantSlug, String detail) {
+    private void publish(String action, String tenantSlug, String actor, String detail) {
         try {
             audit.publish(AuditEvent.of("tenant", action, AuditOutcome.SUCCESS)
                     .tenant(tenantSlug)
-                    .actor("system")
+                    .actor(actor == null || actor.isBlank() ? "system" : actor)
                     .target(tenantSlug)
                     .attribute("detail", detail)
                     .build());

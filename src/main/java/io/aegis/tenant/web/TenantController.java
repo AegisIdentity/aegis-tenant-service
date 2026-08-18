@@ -39,8 +39,12 @@ public class TenantController {
     }
 
     @PostMapping("/api/v1/tenants")
-    public ResponseEntity<TenantResponse> create(@Valid @RequestBody CreateTenantRequest request) {
-        Tenant tenant = tenantService.create(request.name(), request.slug(), request.primaryDomain());
+    public ResponseEntity<TenantResponse> create(@Valid @RequestBody CreateTenantRequest request,
+                                                 @AuthenticationPrincipal Jwt caller) {
+        // The subject of a platform-operator token — a client id for a service token, a user id for a
+        // console admin — so the audit trail records who created the tenant.
+        String actor = caller == null ? null : caller.getSubject();
+        Tenant tenant = tenantService.create(request.name(), request.slug(), request.primaryDomain(), actor);
         return ResponseEntity.created(URI.create("/api/v1/tenants/" + tenant.getSlug()))
                 .body(TenantResponse.from(tenant));
     }
