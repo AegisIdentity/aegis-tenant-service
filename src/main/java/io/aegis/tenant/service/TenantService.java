@@ -19,12 +19,28 @@ public class TenantService {
     private static final Logger log = LoggerFactory.getLogger(TenantService.class);
     private static final Pattern SLUG = Pattern.compile("^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$");
 
+    /** Business topic for tenant lifecycle events (distinct from the audit topic). */
+    static final String TENANT_LIFECYCLE_TOPIC = "aegis.tenant.lifecycle";
+
     private final TenantRepository tenants;
     private final AuditEventPublisher audit;
+    private final org.springframework.beans.factory.ObjectProvider<
+            io.aegis.commons.events.DomainEventPublisher> domainEvents;
 
-    public TenantService(TenantRepository tenants, AuditEventPublisher audit) {
+    public TenantService(TenantRepository tenants, AuditEventPublisher audit,
+                         org.springframework.beans.factory.ObjectProvider<
+                                 io.aegis.commons.events.DomainEventPublisher> domainEvents) {
         this.tenants = tenants;
         this.audit = audit;
+        this.domainEvents = domainEvents;
+    }
+
+    /**
+     * The tenant-lifecycle integration event. Its own record (not shared) so the producer owns the
+     * schema and consumers read tolerantly — the loose coupling event-driven services want.
+     */
+    public record TenantLifecycleEvent(String eventType, String tenantId, String slug, String name,
+                                       java.time.Instant occurredAt) {
     }
 
     public static class DuplicateTenantException extends RuntimeException {
@@ -56,6 +72,13 @@ public class TenantService {
         // A new top-level tenant is a control-plane event — stream it to the platform audit trail,
         // attributed to the operator who created it (from their token subject).
         publish("tenant.created", slug, actor, "tenant name=" + name);
+        // ...and publish a BUSINESS event so downstream services can react (the authorization-server
+        // eagerly provisions this tenant's signing key). Separate topic, separate concern from audit.
+        io.aegis.commons.events.DomainEventPublisher publisher = domainEvents.getIfAvailable();
+        if (publisher != null) {
+            publisher.publish(TENANT_LIFECYCLE_TOPIC, slug,
+                    new TenantLifecycleEvent("tenant.created", slug, slug, name, java.time.Instant.now()));
+        }
         return created;
     }
 
