@@ -1,9 +1,14 @@
 package io.aegis.tenant.service;
 
+import io.aegis.commons.audit.AuditEvent;
+import io.aegis.commons.audit.AuditEventPublisher;
+import io.aegis.commons.audit.AuditOutcome;
 import io.aegis.tenant.domain.Tenant;
 import io.aegis.tenant.domain.TenantRepository;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -11,12 +16,15 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class TenantService {
 
+    private static final Logger log = LoggerFactory.getLogger(TenantService.class);
     private static final Pattern SLUG = Pattern.compile("^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$");
 
     private final TenantRepository tenants;
+    private final AuditEventPublisher audit;
 
-    public TenantService(TenantRepository tenants) {
+    public TenantService(TenantRepository tenants, AuditEventPublisher audit) {
         this.tenants = tenants;
+        this.audit = audit;
     }
 
     public static class DuplicateTenantException extends RuntimeException {
@@ -43,8 +51,27 @@ public class TenantService {
                 && tenants.existsByPrimaryDomain(primaryDomain)) {
             throw new DuplicateTenantException("domain already in use");
         }
-        return tenants.save(new Tenant(UUID.randomUUID(), name, slug,
+        Tenant created = tenants.save(new Tenant(UUID.randomUUID(), name, slug,
                 (primaryDomain == null || primaryDomain.isBlank()) ? null : primaryDomain));
+        // A new top-level tenant is a control-plane event — stream it to the platform audit trail.
+        // The event's tenant is the NEW tenant; a follow-up can enrich the actor from the operator's
+        // token (not threaded into this service method today).
+        publish("tenant.created", slug, "tenant name=" + name);
+        return created;
+    }
+
+    /** Best-effort audit stream; never fails the caller's operation (audit degrades, never breaks). */
+    private void publish(String action, String tenantSlug, String detail) {
+        try {
+            audit.publish(AuditEvent.of("tenant", action, AuditOutcome.SUCCESS)
+                    .tenant(tenantSlug)
+                    .actor("system")
+                    .target(tenantSlug)
+                    .attribute("detail", detail)
+                    .build());
+        } catch (RuntimeException ex) {
+            log.warn("tenant audit publish failed (action={}, slug={}): {}", action, tenantSlug, ex.toString());
+        }
     }
 
     @Transactional(readOnly = true)
